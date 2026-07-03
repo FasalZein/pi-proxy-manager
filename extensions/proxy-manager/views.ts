@@ -90,11 +90,12 @@ function providerScopeButton(providerId: string, models: any[], back: string, sc
 
 function modelActionMenu(providerId: string, modelId: string, back: string, testPath: string): string {
 	const editPath = back.startsWith("mj:") ? `/mj-model-edit/${providerId}?model=${encodeURIComponent(modelId)}` : `/model-edit/${providerId}?model=${encodeURIComponent(modelId)}`;
+	const testAreaId = `test-${esc(providerId)}-${esc(modelId).replace(/[^a-zA-Z0-9-]/g, "_")}`;
 	return `<details class="action-menu">
 		<summary class="action-trigger" aria-label="Model actions for ${esc(modelId)}">⋯</summary>
 		<div class="action-list">
 			<button type="button" class="menu-item" hx-get="${esc(editPath)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit config</button>
-			<form class="menu-form" hx-post="${esc(testPath)}" hx-target="#test-area" hx-disabled-elt="find button" hx-indicator="find .spinner">
+			<form class="menu-form" hx-post="${esc(testPath)}" hx-target="#${testAreaId}" hx-disabled-elt="find button" hx-indicator="find .spinner">
 				<input type="hidden" name="model" value="${esc(modelId)}">
 				<button type="submit" class="menu-item"><span class="spinner" aria-hidden="true"></span>Test</button>
 			</form>
@@ -109,21 +110,25 @@ function modelCards(providerId: string, models: any[], back: string, scope: Set<
 	const rows = models.map((m) => {
 		const image = m.image === true || (Array.isArray(m.input) && m.input.includes("image"));
 		const cost = m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input ?? 0)} · ${fmtPrice(m.cost.output ?? 0)}` : "—";
+		const testAreaId = `test-${providerId}-${m.id}`.replace(/[^a-zA-Z0-9-]/g, "_");
 		return `<li class="model-card">
-			<div class="model-card-main">
-				<code title="${esc(m.id)}">${esc(m.id)}</code>
-				<div class="model-facts">
-					<span><b>Context</b>${fmt(m.contextWindow ?? 0)}</span>
-					<span><b>Max out</b>${fmt(m.maxTokens ?? 0)}</span>
-					<span><b>$/M in·out</b>${cost}</span>
-					<span><b>Reasoning</b>${m.reasoning ? "yes" : "—"}</span>
-					<span><b>Image</b>${image ? "yes" : "—"}</span>
+			<div class="model-card-row">
+				<div class="model-card-main">
+					<code title="${esc(m.id)}">${esc(m.id)}</code>
+					<div class="model-facts">
+						<span><b>Context</b>${fmt(m.contextWindow ?? 0)}</span>
+						<span><b>Max out</b>${fmt(m.maxTokens ?? 0)}</span>
+						<span><b>$/M in·out</b>${cost}</span>
+						<span><b>Reasoning</b>${m.reasoning ? "yes" : "—"}</span>
+						<span><b>Image</b>${image ? "yes" : "—"}</span>
+					</div>
+				</div>
+				<div class="model-actions">
+					${scopeToggle(providerId, m.id, back, scope)}
+					${modelActionMenu(providerId, m.id, back, testPath)}
 				</div>
 			</div>
-			<div class="model-actions">
-				${scopeToggle(providerId, m.id, back, scope)}
-				${modelActionMenu(providerId, m.id, back, testPath)}
-			</div>
+			<div id="${testAreaId}" class="model-test-area"></div>
 		</li>`;
 	}).join("\n");
 	return `<ul class="model-cards">${rows}</ul>`;
@@ -377,7 +382,6 @@ export function renderDetail(id: string, p: ProxyEntry): string {
 			${providerScopeButton(id, p.models, back, scope)}
 		</div>
 		${models}
-		<div id="test-area"></div>
 	</div>
 </div>`;
 }
@@ -554,7 +558,6 @@ export function renderMjDetail(id: string, p: any): string {
 			${providerScopeButton(id, models, back, scope)}
 		</div>
 		${modelCards(id, models, back, scope, `/test-mj/${id}`)}
-		<div id="test-area"></div>
 	</div>
 </div>`;
 }
@@ -732,10 +735,13 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 .model-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 24px 0 12px; }
 .model-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .model-card {
-	display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
 	border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px;
 	background: color-mix(in oklch, var(--bg) 55%, transparent);
 }
+.model-card-row {
+	display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
+}
+.model-test-area:not(:empty) { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px; }
 .model-card-main { min-width: 0; display: grid; gap: 8px; }
 .model-card code { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
 .model-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 8px 16px; color: var(--text); }
@@ -884,7 +890,7 @@ dialog.confirm p { margin: 0; text-wrap: pretty; }
 	.proxy { align-items: stretch; flex-direction: column; padding: 24px 8px 8px; }
 	.proxy-open { padding: 8px; }
 	.proxy-actions, .detail-actions { justify-content: flex-start; }
-	.model-card { grid-template-columns: 1fr; }
+	.model-card-row { grid-template-columns: 1fr; }
 	.model-actions { justify-content: flex-start; }
 	.action-list { left: 0; right: auto; }
 	.check-row { grid-template-columns: 1rem minmax(0, 1fr); }
