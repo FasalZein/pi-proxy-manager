@@ -61,19 +61,15 @@ function providerToggleButton(id: string, p: ProxyEntry, back = ""): string {
 	</form>`;
 }
 
-function scopeStatus(providerId: string, modelId: string, scope: Set<string>): string {
-	const inScope = scope.has(`${providerId}/${modelId}`);
-	return `<span class="scope-pill${inScope ? " active" : ""}">${inScope ? "In scope" : "Out of scope"}</span>`;
-}
-
-function scopeMenuItem(providerId: string, modelId: string, back: string, scope: Set<string>): string {
+function scopeToggle(providerId: string, modelId: string, back: string, scope: Set<string>): string {
 	const ref = `${providerId}/${modelId}`;
 	const inScope = scope.has(ref);
-	const next = inScope ? "Disable model" : "Enable model";
-	return `<form class="menu-form" hx-post="/scope" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} ${ref}? This updates settings.json enabledModels.`, next, inScope)}>
+	return `<form class="inline-hx" hx-post="/scope" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button">
 		<input type="hidden" name="ref" value="${esc(ref)}">
 		<input type="hidden" name="back" value="${esc(back)}">
-		<button type="submit" class="menu-item">${inScope ? "Disable in scope" : "Enable in scope"}</button>
+		<button type="submit" class="switch-toggle${inScope ? " active" : ""}" aria-pressed="${inScope}" title="${inScope ? "Remove from" : "Add to"} pi model picker">
+			${switchInner(inScope ? "Enabled" : "Disabled")}
+		</button>
 	</form>`;
 }
 
@@ -92,17 +88,16 @@ function providerScopeButton(providerId: string, models: any[], back: string, sc
 	</form>`;
 }
 
-function modelActionMenu(providerId: string, modelId: string, back: string, scope: Set<string>, testPath: string): string {
+function modelActionMenu(providerId: string, modelId: string, back: string, testPath: string): string {
 	const editPath = back.startsWith("mj:") ? `/mj-model-edit/${providerId}?model=${encodeURIComponent(modelId)}` : `/model-edit/${providerId}?model=${encodeURIComponent(modelId)}`;
 	return `<details class="action-menu">
-		<summary class="action-trigger">Actions</summary>
+		<summary class="action-trigger" aria-label="Model actions for ${esc(modelId)}">⋯</summary>
 		<div class="action-list">
-			<button type="button" class="menu-item" hx-get="${esc(editPath)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit model config</button>
+			<button type="button" class="menu-item" hx-get="${esc(editPath)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit config</button>
 			<form class="menu-form" hx-post="${esc(testPath)}" hx-target="#test-area" hx-disabled-elt="find button" hx-indicator="find .spinner">
 				<input type="hidden" name="model" value="${esc(modelId)}">
-				<button type="submit" class="menu-item"><span class="spinner" aria-hidden="true"></span>Test model</button>
+				<button type="submit" class="menu-item"><span class="spinner" aria-hidden="true"></span>Test</button>
 			</form>
-			${scopeMenuItem(providerId, modelId, back, scope)}
 		</div>
 	</details>`;
 }
@@ -116,10 +111,7 @@ function modelCards(providerId: string, models: any[], back: string, scope: Set<
 		const cost = m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input ?? 0)} · ${fmtPrice(m.cost.output ?? 0)}` : "—";
 		return `<li class="model-card">
 			<div class="model-card-main">
-				<div class="model-line">
-					<code title="${esc(m.id)}">${esc(m.id)}</code>
-					${scopeStatus(providerId, m.id, scope)}
-				</div>
+				<code title="${esc(m.id)}">${esc(m.id)}</code>
 				<div class="model-facts">
 					<span><b>Context</b>${fmt(m.contextWindow ?? 0)}</span>
 					<span><b>Max out</b>${fmt(m.maxTokens ?? 0)}</span>
@@ -129,7 +121,8 @@ function modelCards(providerId: string, models: any[], back: string, scope: Set<
 				</div>
 			</div>
 			<div class="model-actions">
-				${modelActionMenu(providerId, m.id, back, scope, testPath)}
+				${scopeToggle(providerId, m.id, back, scope)}
+				${modelActionMenu(providerId, m.id, back, testPath)}
 			</div>
 		</li>`;
 	}).join("\n");
@@ -744,14 +737,11 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 	background: color-mix(in oklch, var(--bg) 55%, transparent);
 }
 .model-card-main { min-width: 0; display: grid; gap: 8px; }
-.model-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .model-card code { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
-.scope-pill { flex-shrink: 0; border-radius: 9999px; padding: 1px 8px; background: var(--surface-2); color: var(--muted); font-size: 0.6875rem; font-weight: 500; }
-.scope-pill.active { color: var(--accent); background: color-mix(in oklch, var(--accent) 12%, transparent); }
 .model-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 8px 16px; color: var(--text); }
 .model-facts span { min-width: 0; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
 .model-facts b { display: block; color: var(--muted); font-size: 0.6875rem; font-weight: 500; text-transform: uppercase; }
-.model-actions { display: flex; justify-content: flex-end; align-items: start; min-width: 7rem; }
+.model-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; flex-shrink: 0; }
 
 /* test results */
 .test-results { margin-top: 16px; }
@@ -850,12 +840,13 @@ legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0
 .switch-toggle.active .switch-thumb { transform: translateX(12px); background: var(--accent); }
 .action-menu { position: relative; }
 .action-trigger {
-	display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 4px 12px;
-	border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text);
-	font-size: 0.8125rem; font-weight: 500; cursor: pointer; list-style: none;
+	display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+	border: 1px solid transparent; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+	font-size: 1.125rem; letter-spacing: 0.1em; cursor: pointer; list-style: none;
+	transition: background-color 150ms var(--ease-out), border-color 150ms var(--ease-out);
 }
 .action-trigger::-webkit-details-marker { display: none; }
-.action-trigger::after { content: "↓"; color: var(--muted); margin-left: 8px; }
+.action-trigger:hover { background: var(--surface-2); border-color: var(--border); color: var(--text); }
 .action-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .action-menu[open] .action-trigger { border-color: var(--muted); }
 .action-list {
@@ -894,7 +885,7 @@ dialog.confirm p { margin: 0; text-wrap: pretty; }
 	.proxy-open { padding: 8px; }
 	.proxy-actions, .detail-actions { justify-content: flex-start; }
 	.model-card { grid-template-columns: 1fr; }
-	.model-actions { min-width: 0; justify-content: flex-start; }
+	.model-actions { justify-content: flex-start; }
 	.action-list { left: 0; right: auto; }
 	.check-row { grid-template-columns: 1rem minmax(0, 1fr); }
 	.check-note { grid-column: 2; }
