@@ -38,6 +38,13 @@ import {
 
 export { loadConfig, type ProxyEntry } from "./config.ts";
 
+const HTML_HEADERS = {
+	"content-type": "text/html; charset=utf-8",
+	"cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+	pragma: "no-cache",
+	expires: "0",
+};
+
 let server: { close(): void; closeAllConnections?: () => void } | undefined;
 
 /** Close the UI server so reloads/new sessions can rebind the port. */
@@ -387,10 +394,10 @@ export async function startServer(
 				const isHtmx =
 					req.headers["hx-request"] === "true" && req.headers["hx-history-restore-request"] !== "true";
 				const reply = await handler(req.method ?? "GET", pathname, new URLSearchParams(body), isHtmx);
-				res.writeHead(reply.status, { "content-type": "text/html; charset=utf-8" });
+				res.writeHead(reply.status, HTML_HEADERS);
 				res.end(reply.body);
 			} catch (error) {
-				res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+				res.writeHead(500, { ...HTML_HEADERS, "content-type": "text/plain; charset=utf-8" });
 				res.end(error instanceof Error ? error.message : String(error));
 			}
 		});

@@ -87,8 +87,9 @@ export default function (pi: ExtensionAPI) {
 				}
 			};
 			const { url } = await startServer(applyLive, refreshRegistry);
-			ctx.ui.notify(`Proxy manager at ${url}`, "info");
-			await pi.exec("open", [url]).catch(() => {});
+			const freshUrl = `${url}/?reload=${Date.now()}`;
+			ctx.ui.notify(`Proxy manager at ${freshUrl}`, "info");
+			await pi.exec("open", [freshUrl]).catch(() => {});
 		},
 	});
 }

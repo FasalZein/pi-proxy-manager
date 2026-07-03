@@ -562,6 +562,7 @@ export function page(config: ProxyConfig, content?: string): string {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"historyCacheSize":0}'>
 <title>pi · proxy manager</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
