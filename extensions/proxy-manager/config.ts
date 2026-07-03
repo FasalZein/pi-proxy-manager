@@ -95,17 +95,32 @@ export function scopedModels(): Set<string> {
 	return new Set(Array.isArray(list) ? list : []);
 }
 
+/** Write settings.json after backing it up, preserving every field except enabledModels. */
+function saveSettingsScope(raw: any, enabledModels: string[]) {
+	raw.enabledModels = enabledModels;
+	try {
+		writeFileSync(`${SETTINGS_PATH}.bak`, readFileSync(SETTINGS_PATH));
+	} catch {}
+	writeFileSync(SETTINGS_PATH, `${JSON.stringify(raw, null, 2)}\n`);
+}
+
 /** Add or remove `provider/model` from settings.json enabledModels. */
 export function toggleScope(ref: string): boolean {
 	const raw = loadSettings();
 	const list: string[] = Array.isArray(raw.enabledModels) ? raw.enabledModels : [];
 	const inScope = list.includes(ref);
-	raw.enabledModels = inScope ? list.filter((m) => m !== ref) : [...list, ref];
-	try {
-		writeFileSync(`${SETTINGS_PATH}.bak`, readFileSync(SETTINGS_PATH));
-	} catch {}
-	writeFileSync(SETTINGS_PATH, `${JSON.stringify(raw, null, 2)}\n`);
+	saveSettingsScope(raw, inScope ? list.filter((m) => m !== ref) : [...list, ref]);
 	return !inScope;
+}
+
+/** Add or remove several exact model refs from settings.json enabledModels. */
+export function setScopeRefs(refs: string[], enabled: boolean): number {
+	const raw = loadSettings();
+	const list: string[] = Array.isArray(raw.enabledModels) ? raw.enabledModels : [];
+	const wanted = new Set(refs);
+	const next = enabled ? [...list, ...refs.filter((ref) => !list.includes(ref))] : list.filter((ref) => !wanted.has(ref));
+	saveSettingsScope(raw, next);
+	return Math.abs(next.length - list.length);
 }
 
 /** models.json keys may reference env vars ("$MY_KEY"). */

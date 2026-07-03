@@ -16,6 +16,7 @@ import {
 	resolveKey,
 	saveConfig,
 	saveModelsJson,
+	setScopeRefs,
 	slug,
 	toggleScope,
 } from "./config.ts";
@@ -87,6 +88,13 @@ export async function startServer(
 		const wrap = (config: ProxyConfig, content: string) => (isHtmx ? content : page(config, content));
 		const missing = (config: ProxyConfig, what: string) =>
 			ok(wrap(config, renderHome(config)) + (isHtmx ? flash("error", what) : ""));
+		const renderBack = (config: ProxyConfig, back: string) => {
+			const [kind, id] = back.split(":");
+			if (kind === "proxy" && config[id]) return renderDetail(id, config[id]);
+			const p = loadModelsJson()?.providers?.[id];
+			if (kind === "mj" && p) return renderMjDetail(id, p);
+			return renderHome(config);
+		};
 
 		// -- pages ------------------------------------------------------------
 
@@ -225,6 +233,7 @@ export async function startServer(
 		const toggleMatch = pathname.match(/^\/toggle\/([a-z0-9-]+)$/);
 		if (method === "POST" && toggleMatch) {
 			const id = toggleMatch[1];
+			const back = String(form.get("back") ?? "");
 			const config = loadConfig();
 			const entry = config[id];
 			if (!entry) return ok(renderHome(config) + flash("error", "That proxy no longer exists."));
@@ -232,7 +241,7 @@ export async function startServer(
 			saveConfig(config);
 			applyLive(id, entry);
 			return ok(
-				renderHome(config) +
+				renderBack(config, back) +
 					flash("ok", entry.enabled ? `${id} enabled — models registered in pi.` : `${id} disabled — models unregistered from pi.`),
 			);
 		}
@@ -334,19 +343,34 @@ export async function startServer(
 			if (!/^[A-Za-z0-9_-]+\/.+$/.test(ref)) return ok(errorBox("Invalid model reference."));
 
 			const added = toggleScope(ref);
+			refreshRegistry?.();
 			const note = flash(
 				"ok",
 				added
-					? `${ref} added to the model scope (settings.json).`
-					: `${ref} removed from the model scope (settings.json).`,
+					? `${ref} enabled in the model scope (settings.json).`
+					: `${ref} disabled in the model scope (settings.json).`,
 			);
 
 			const config = loadConfig();
-			const [kind, id] = back.split(":");
-			if (kind === "proxy" && config[id]) return ok(renderDetail(id, config[id]) + note);
-			const p = loadModelsJson()?.providers?.[id];
-			if (kind === "mj" && p) return ok(renderMjDetail(id, p) + note);
-			return ok(renderHome(config) + note);
+			return ok(renderBack(config, back) + note);
+		}
+
+		if (method === "POST" && pathname === "/scope-provider") {
+			const refs = form.getAll("refs").map(String).filter((ref) => /^[A-Za-z0-9_-]+\/.+$/.test(ref));
+			const back = String(form.get("back") ?? "");
+			const enabled = form.get("enabled") === "true";
+			if (refs.length === 0) return ok(errorBox("No provider models found to update."));
+
+			const changed = setScopeRefs(refs, enabled);
+			refreshRegistry?.();
+			const provider = refs[0]?.split("/")[0] ?? "provider";
+			const note = flash(
+				"ok",
+				`${provider} ${enabled ? "enabled" : "disabled"} in the model scope (${changed} model${changed === 1 ? "" : "s"} changed).`,
+			);
+
+			const config = loadConfig();
+			return ok(renderBack(config, back) + note);
 		}
 
 		return { status: 404, body: "Not found" };

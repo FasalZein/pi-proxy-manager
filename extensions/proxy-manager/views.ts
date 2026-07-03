@@ -43,19 +43,81 @@ export function errorBox(html: string): string {
 	return `<div class="error-box"><p>${html}</p></div>`;
 }
 
-/**
- * Toggle for pi's model scope (settings.json enabledModels).
- * `back` tells the /scope route which detail view to re-render.
- */
+function confirmAttrs(message: string, ok = "Confirm", danger = true): string {
+	return `hx-confirm="${esc(message)}" data-confirm-ok="${esc(ok)}" data-confirm-kind="${danger ? "danger" : "safe"}"`;
+}
+
+function switchInner(label: string): string {
+	return `<span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>${esc(label)}</span>`;
+}
+
+function providerToggleButton(id: string, p: ProxyEntry, back = ""): string {
+	const next = p.enabled ? "Disable" : "Enable";
+	return `<form class="inline-hx" hx-post="/toggle/${esc(id)}" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} ${id}? ${p.enabled ? "Its models will be unregistered from pi." : "Its models will be registered in pi."}`, next, p.enabled)}>
+		${back ? `<input type="hidden" name="back" value="${esc(back)}">` : ""}
+		<button type="submit" class="switch-toggle${p.enabled ? " active" : ""}" aria-pressed="${p.enabled}">
+			${switchInner(p.enabled ? "Provider enabled" : "Provider disabled")}
+		</button>
+	</form>`;
+}
+
+/** Toggle for pi's model scope (settings.json enabledModels). */
 function scopeButton(providerId: string, modelId: string, back: string, scope: Set<string>): string {
 	const ref = `${providerId}/${modelId}`;
 	const inScope = scope.has(ref);
-	return `<button class="btn btn-small${inScope ? " scope-on" : ""}" hx-post="/scope"
-		hx-vals='{"ref":"${esc(ref)}","back":"${esc(back)}"}'
-		hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this"
-		title="${inScope ? "Remove from" : "Add to"} pi's model picker (settings.json enabledModels)">
-		${inScope ? "✓ In scope" : "Add to scope"}
-	</button>`;
+	const next = inScope ? "Disable model" : "Enable model";
+	return `<form class="inline-hx" hx-post="/scope" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} ${ref}? This updates settings.json enabledModels.`, next, inScope)}>
+		<input type="hidden" name="ref" value="${esc(ref)}">
+		<input type="hidden" name="back" value="${esc(back)}">
+		<button type="submit" class="switch-toggle${inScope ? " active" : ""}" aria-pressed="${inScope}" title="${inScope ? "Disable" : "Enable"} this model in pi's model picker">
+			${switchInner(inScope ? "Model enabled" : "Model disabled")}
+		</button>
+	</form>`;
+}
+
+function providerScopeButton(providerId: string, models: any[], back: string, scope: Set<string>): string {
+	const refs = models.map((m) => `${providerId}/${m.id}`).filter(Boolean);
+	if (refs.length === 0) return "";
+	const allEnabled = refs.every((ref) => scope.has(ref));
+	const next = allEnabled ? "Disable provider models" : "Enable provider models";
+	return `<form class="inline-hx" hx-post="/scope-provider" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} for ${providerId}? This updates settings.json enabledModels for ${refs.length} model${refs.length === 1 ? "" : "s"}.`, next, allEnabled)}>
+		<input type="hidden" name="back" value="${esc(back)}">
+		<input type="hidden" name="enabled" value="${allEnabled ? "false" : "true"}">
+		${refs.map((ref) => `<input type="hidden" name="refs" value="${esc(ref)}">`).join("")}
+		<button type="submit" class="switch-toggle${allEnabled ? " active" : ""}" aria-pressed="${allEnabled}">
+			${switchInner(allEnabled ? "Disable provider models" : "Enable provider models")}
+		</button>
+	</form>`;
+}
+
+function modelCards(providerId: string, models: any[], back: string, scope: Set<string>, testPath: string): string {
+	if (models.length === 0) {
+		return `<div class="empty"><p>No models are configured for this provider. Edit the provider and fetch models to add them.</p></div>`;
+	}
+	const rows = models.map((m) => {
+		const image = m.image === true || (Array.isArray(m.input) && m.input.includes("image"));
+		const cost = m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input ?? 0)} · ${fmtPrice(m.cost.output ?? 0)}` : "—";
+		return `<li class="model-card">
+			<div class="model-card-main">
+				<code title="${esc(m.id)}">${esc(m.id)}</code>
+				<div class="model-facts">
+					<span><b>Context</b>${fmt(m.contextWindow ?? 0)}</span>
+					<span><b>Max out</b>${fmt(m.maxTokens ?? 0)}</span>
+					<span><b>$/M in·out</b>${cost}</span>
+					<span><b>Reasoning</b>${m.reasoning ? "yes" : "—"}</span>
+					<span><b>Image</b>${image ? "yes" : "—"}</span>
+				</div>
+			</div>
+			<div class="model-actions">
+				${scopeButton(providerId, m.id, back, scope)}
+				<form class="inline-hx" hx-post="${esc(testPath)}" hx-target="#test-area" hx-disabled-elt="find button" hx-indicator="find .spinner">
+					<input type="hidden" name="model" value="${esc(m.id)}">
+					<button type="submit" class="btn btn-small"><span class="spinner" aria-hidden="true"></span>Test</button>
+				</form>
+			</div>
+		</li>`;
+	}).join("\n");
+	return `<ul class="model-cards">${rows}</ul>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -168,8 +230,8 @@ function renderList(config: ProxyConfig): string {
 	const entries = Object.entries(config);
 	if (entries.length === 0) {
 		return `<div class="empty">
-			<p>No proxies yet. Add your first proxy below and its models become selectable in pi right away.</p>
-			<a class="btn" href="#add">Add a proxy</a>
+			<p>No proxies yet. Add your first proxy and its models become selectable in pi right away.</p>
+			<button type="button" class="btn" onclick="document.getElementById('add-proxy-modal').showModal()">Add proxy</button>
 		</div>`;
 	}
 
@@ -192,13 +254,10 @@ function renderList(config: ProxyConfig): string {
 					</span>
 				</button>
 				<div class="proxy-actions">
-					<button class="btn btn-small" hx-post="/toggle/${esc(id)}"
-						hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this">
-						${p.enabled ? "Disable" : "Enable"}
-					</button>
+					${providerToggleButton(id, p)}
 					<button class="btn btn-small btn-danger" hx-post="/delete/${esc(id)}"
 						hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this"
-						hx-confirm="Delete ${esc(id)}? Its models will be unregistered from pi.">
+						${confirmAttrs(`Delete ${id}? Its models will be unregistered from pi.`, "Delete")}>
 						Delete
 					</button>
 				</div>
@@ -243,17 +302,30 @@ function renderMjList(): string {
 /** Home view: proxy list + models.json providers + add form. */
 export function renderHome(config: ProxyConfig): string {
 	return `<div id="view">
+	<div class="section-bar">
+		<div>
+			<h2 id="registered-h">Providers</h2>
+			<p class="section-copy">Enable providers, scope models, and test proxy behavior without leaving pi.</p>
+		</div>
+		<button type="button" class="btn btn-primary" onclick="document.getElementById('add-proxy-modal').showModal()">Add proxy</button>
+	</div>
+
 	<section aria-labelledby="registered-h">
-		<h2 id="registered-h">Registered proxies</h2>
 		${renderList(config)}
 	</section>
 
 	${renderMjList()}
 
-	<section aria-labelledby="add-h" id="add">
-		<h2 id="add-h">Add proxy</h2>
+	<dialog class="modal" id="add-proxy-modal" aria-labelledby="add-h">
+		<div class="modal-head">
+			<div>
+				<h2 id="add-h">Add proxy</h2>
+				<p class="hint">Fetch models, choose what to register, then save it into the running pi session.</p>
+			</div>
+			<button type="button" class="btn btn-small" onclick="document.getElementById('add-proxy-modal').close()" aria-label="Close add proxy dialog">Close</button>
+		</div>
 		${renderProxyForm()}
-	</section>
+	</dialog>
 </div>`;
 }
 
@@ -263,26 +335,8 @@ export function renderHome(config: ProxyConfig): string {
 
 export function renderDetail(id: string, p: ProxyEntry): string {
 	const scope = scopedModels();
-	const modelRows = p.models
-		.map(
-			(m) => `<tr>
-			<td><code>${esc(m.id)}</code></td>
-			<td class="num">${fmt(m.contextWindow ?? 128000)}</td>
-			<td class="num">${fmt(m.maxTokens ?? 8192)}</td>
-			<td class="num">${m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input)} · ${fmtPrice(m.cost.output)}` : "—"}</td>
-			<td class="tag">${m.reasoning ? "✓" : "—"}</td>
-			<td class="tag">${m.image ? "✓" : "—"}</td>
-			<td class="row-action">
-				${scopeButton(id, m.id, `proxy:${id}`, scope)}
-				<button class="btn btn-small" hx-post="/test/${esc(id)}" hx-vals='{"model":"${esc(m.id)}"}'
-					hx-target="#test-area" hx-disabled-elt="this" hx-indicator="this">
-					<span class="spinner" aria-hidden="true"></span>
-					Test
-				</button>
-			</td>
-		</tr>`,
-		)
-		.join("\n");
+	const back = `proxy:${id}`;
+	const models = modelCards(id, p.models, back, scope, `/test/${id}`);
 
 	return `<div id="view">
 	<div class="detail${p.enabled ? "" : " proxy-off"}">
@@ -290,13 +344,10 @@ export function renderDetail(id: string, p: ProxyEntry): string {
 			<button class="btn btn-small" hx-get="/list" hx-target="#view" hx-swap="outerHTML" hx-push-url="/">← All proxies</button>
 			<div class="detail-actions">
 				<button class="btn btn-small" hx-get="/edit/${esc(id)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit</button>
-				<button class="btn btn-small" hx-post="/toggle/${esc(id)}"
-					hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this" hx-push-url="/">
-					${p.enabled ? "Disable" : "Enable"}
-				</button>
+				${providerToggleButton(id, p, back)}
 				<button class="btn btn-small btn-danger" hx-post="/delete/${esc(id)}"
 					hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this" hx-push-url="/"
-					hx-confirm="Delete ${esc(id)}? Its models will be unregistered from pi.">
+					${confirmAttrs(`Delete ${id}? Its models will be unregistered from pi.`, "Delete")}>
 					Delete
 				</button>
 			</div>
@@ -304,7 +355,7 @@ export function renderDetail(id: string, p: ProxyEntry): string {
 		<div class="detail-title">
 			<span class="dot" aria-hidden="true"></span>
 			<strong>${esc(id)}</strong>
-			<span class="pid">${p.enabled ? "enabled" : "disabled"}</span>
+			<span class="pid">${p.enabled ? "registered" : "not registered"}</span>
 		</div>
 		<dl class="detail-grid">
 			<dt>Base URL</dt><dd class="mono">${esc(p.baseUrl)}</dd>
@@ -312,10 +363,11 @@ export function renderDetail(id: string, p: ProxyEntry): string {
 			<dt>API format</dt><dd class="mono">${esc(p.api ?? "openai-completions")}</dd>
 			<dt>tool_choice fix</dt><dd>${p.objectToolChoice ? "active — proxy needs object-style tool_choice" : "not needed"}</dd>
 		</dl>
-		<table class="model-table">
-			<thead><tr><th>Model</th><th class="num">Context</th><th class="num">Max out</th><th class="num">$/M in·out</th><th>Reasoning</th><th>Image</th><th></th></tr></thead>
-			<tbody>${modelRows}</tbody>
-		</table>
+		<div class="model-bar">
+			<h3>Models</h3>
+			${providerScopeButton(id, p.models, back, scope)}
+		</div>
+		${models}
 		<div id="test-area"></div>
 	</div>
 </div>`;
@@ -388,26 +440,8 @@ export function renderEditView(id: string, entry: ProxyEntry): string {
 
 export function renderMjDetail(id: string, p: any): string {
 	const scope = scopedModels();
-	const modelRows = (p.models ?? [])
-		.map(
-			(m: any) => `<tr>
-			<td><code>${esc(m.id)}</code></td>
-			<td class="num">${fmt(m.contextWindow ?? 0)}</td>
-			<td class="num">${fmt(m.maxTokens ?? 0)}</td>
-			<td class="num">${m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input ?? 0)} · ${fmtPrice(m.cost.output ?? 0)}` : "—"}</td>
-			<td class="tag">${m.reasoning ? "✓" : "—"}</td>
-			<td class="tag">${Array.isArray(m.input) && m.input.includes("image") ? "✓" : "—"}</td>
-			<td class="row-action">
-				${scopeButton(id, m.id, `mj:${id}`, scope)}
-				<button class="btn btn-small" hx-post="/test-mj/${esc(id)}" hx-vals='{"model":"${esc(m.id)}"}'
-					hx-target="#test-area" hx-disabled-elt="this" hx-indicator="this">
-					<span class="spinner" aria-hidden="true"></span>
-					Test
-				</button>
-			</td>
-		</tr>`,
-		)
-		.join("\n");
+	const models = p.models ?? [];
+	const back = `mj:${id}`;
 
 	return `<div id="view">
 	<div class="detail">
@@ -417,8 +451,8 @@ export function renderMjDetail(id: string, p: any): string {
 				<button class="btn btn-small" hx-get="/mj-edit/${esc(id)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit</button>
 				<button class="btn btn-small btn-danger" hx-post="/mj-delete/${esc(id)}"
 					hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="this" hx-push-url="/"
-					hx-confirm="Remove ${esc(id)} from models.json? A backup is written to models.json.bak.">
-					Delete
+					${confirmAttrs(`Remove ${id} from models.json? A backup is written to models.json.bak.`, "Remove")}>
+					Remove
 				</button>
 			</div>
 		</div>
@@ -432,10 +466,11 @@ export function renderMjDetail(id: string, p: any): string {
 			<dt>API key</dt><dd class="mono">${esc(p.apiKey?.startsWith("$") ? p.apiKey : maskKey(p.apiKey ?? ""))}</dd>
 			<dt>API format</dt><dd class="mono">${esc(p.api ?? "openai-completions")}</dd>
 		</dl>
-		<table class="model-table">
-			<thead><tr><th>Model</th><th class="num">Context</th><th class="num">Max out</th><th class="num">$/M in·out</th><th>Reasoning</th><th>Image</th><th></th></tr></thead>
-			<tbody>${modelRows}</tbody>
-		</table>
+		<div class="model-bar">
+			<h3>Models</h3>
+			${providerScopeButton(id, models, back, scope)}
+		</div>
+		${modelCards(id, models, back, scope, `/test-mj/${id}`)}
 		<div id="test-area"></div>
 	</div>
 </div>`;
@@ -556,12 +591,14 @@ body {
 	font-weight: 380;
 	-webkit-font-smoothing: antialiased;
 }
-main { max-width: 44rem; margin: 0 auto; padding: 48px 24px 96px; }
-header { margin-bottom: 40px; }
-h1 { font-size: 1.375rem; font-weight: 600; line-height: 1.2; margin: 0 0 8px; text-wrap: balance; }
-h2 { font-size: 0.8125rem; font-weight: 600; line-height: 1.3; margin: 0 0 16px; color: var(--muted); text-transform: uppercase; }
-header p { margin: 0; color: var(--muted); max-width: 45ch; text-wrap: pretty; }
-section { margin-bottom: 48px; }
+main { max-width: 72rem; margin: 0 auto; padding: 48px 24px 96px; }
+header { margin-bottom: 32px; display: flex; justify-content: space-between; gap: 24px; align-items: end; }
+h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.2; margin: 0 0 8px; text-wrap: balance; }
+h2, h3 { font-size: 0.8125rem; font-weight: 600; line-height: 1.3; margin: 0; color: var(--muted); text-transform: uppercase; }
+header p { margin: 0; color: var(--muted); max-width: 52ch; text-wrap: pretty; }
+section { margin-bottom: 32px; }
+.section-bar { display: flex; justify-content: space-between; gap: 16px; align-items: end; margin-bottom: 16px; }
+.section-copy { margin: 8px 0 0; color: var(--muted); font-size: 0.875rem; max-width: 52ch; text-wrap: pretty; }
 code, .mono { font-family: ui-monospace, "SF Mono", monospace; font-size: 0.8125rem; }
 input[type="number"], .num { font-variant-numeric: tabular-nums; }
 
@@ -572,8 +609,8 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 .flash-error { background: color-mix(in oklch, var(--danger) 12%, transparent); color: var(--danger); }
 
 /* proxy rows */
-.proxy-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); }
-.proxy { display: flex; align-items: center; gap: 16px; padding: 8px 16px 8px 0; }
+.proxy-rows { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.proxy { position: relative; display: flex; align-items: center; gap: 16px; padding: 8px 40px 8px 0; background: color-mix(in oklch, var(--surface) 45%, transparent); }
 .proxy + .proxy { border-top: 1px solid var(--border); }
 .proxy-open {
 	display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0;
@@ -583,52 +620,59 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 }
 .proxy-open:hover { background: var(--surface); }
 .proxy-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--accent); flex-shrink: 0; }
+.dot { position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; border-radius: 9999px; background: var(--accent); }
 .proxy-off .dot { background: var(--muted); }
-.proxy-off .proxy-info, .proxy-off .detail-grid, .proxy-off .model-table { opacity: 0.55; }
+.proxy-off .proxy-info, .proxy-off .detail-grid, .proxy-off .model-cards { opacity: 0.55; }
 .proxy-info { flex: 1; min-width: 0; display: block; }
 .proxy-head { display: flex; align-items: baseline; gap: 8px; }
 .pid { color: var(--muted); font-size: 0.8125rem; }
 .badge { border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 0.6875rem; color: var(--muted); }
 .proxy-meta { display: flex; gap: 16px; color: var(--muted); margin-top: 4px; flex-wrap: wrap; }
 .models code { background: var(--surface-2); border-radius: 4px; padding: 1px 6px; }
-.proxy-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.proxy-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+.inline-hx { display: inline; }
+.inline-hx button { width: auto; }
 
 /* detail view */
-.detail { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
-.detail-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-.detail-actions { display: flex; gap: 8px; }
+.detail { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; background: color-mix(in oklch, var(--surface) 35%, transparent); }
+.detail-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
+.detail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .detail-title { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
 .detail-title strong { font-size: 1.0625rem; }
 .detail-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 24px; margin: 0 0 24px; }
 .detail-grid dt { color: var(--muted); font-size: 0.8125rem; }
 .detail-grid dd { margin: 0; overflow-wrap: anywhere; }
-.model-table { width: 100%; border-collapse: collapse; }
-.model-table th { text-align: left; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 8px; border-bottom: 1px solid var(--border); }
-.model-table td { padding: 8px; border-bottom: 1px solid var(--border); }
-.model-table tr:last-child td { border-bottom: 0; }
-.model-table th.num, .model-table td.num { text-align: right; }
-.model-table .tag { color: var(--muted); }
-.model-table .row-action { text-align: right; white-space: nowrap; }
-.scope-on { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 40%, var(--border)); }
+.model-bar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 24px 0 12px; }
+.model-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.model-card {
+	display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center;
+	border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px;
+	background: color-mix(in oklch, var(--bg) 55%, transparent);
+}
+.model-card-main { min-width: 0; display: grid; gap: 8px; }
+.model-card code { display: block; white-space: normal; overflow-wrap: anywhere; }
+.model-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 8px 16px; color: var(--text); }
+.model-facts span { min-width: 0; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.model-facts b { display: block; color: var(--muted); font-size: 0.6875rem; font-weight: 500; text-transform: uppercase; }
+.model-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 11rem; }
 
 /* test results */
 .test-results { margin-top: 16px; }
 .checks { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); }
-.check-row { display: flex; align-items: baseline; gap: 12px; padding: 8px 16px; }
+.check-row { display: grid; grid-template-columns: 1rem minmax(9rem, 12rem) minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
 .check-row + .check-row { border-top: 1px solid var(--border); }
 .check-mark { flex-shrink: 0; }
 .check-pass .check-mark { color: var(--accent); }
 .check-fail .check-mark { color: var(--danger); }
-.check-label { font-weight: 500; min-width: 11rem; }
-.check-note { color: var(--muted); font-size: 0.8125rem; }
+.check-label { font-weight: 500; min-width: 0; }
+.check-note { color: var(--muted); font-size: 0.8125rem; overflow-wrap: anywhere; }
 
 /* empty state */
 .empty { border: 1px dashed var(--border); border-radius: var(--radius); padding: 32px 24px; text-align: center; }
 .empty p { margin: 0 0 16px; color: var(--muted); max-width: 45ch; margin-inline: auto; text-wrap: pretty; }
 
 /* form */
-form { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; background: var(--surface); }
+form:not(.inline-hx) { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; background: var(--surface); }
 fieldset { border: 0; margin: 0 0 24px; padding: 0; }
 legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 12px; }
 .field { display: block; margin-bottom: 16px; }
@@ -692,13 +736,31 @@ legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0
 .btn-block { width: 100%; }
 .btn-danger { color: var(--danger); }
 .btn-danger:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }
+.switch-toggle {
+	display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 10px;
+	border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted);
+	font: inherit; font-size: 0.8125rem; font-weight: 500; cursor: pointer; white-space: nowrap;
+	transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 100ms var(--ease-out);
+}
+.switch-toggle:hover { background: color-mix(in oklch, var(--surface-2) 85%, white); color: var(--text); }
+.switch-toggle:active { transform: scale(0.96); }
+.switch-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch-toggle.active { color: var(--text); border-color: color-mix(in oklch, var(--accent) 36%, var(--border)); }
+.switch-track { width: 30px; height: 18px; padding: 2px; border-radius: 9999px; background: var(--border); display: inline-flex; align-items: center; }
+.switch-thumb { width: 14px; height: 14px; border-radius: 9999px; background: var(--muted); transition: transform 150ms var(--ease-out), background-color 150ms var(--ease-out); }
+.switch-toggle.active .switch-track { background: color-mix(in oklch, var(--accent) 30%, var(--border)); }
+.switch-toggle.active .switch-thumb { transform: translateX(12px); background: var(--accent); }
 .form-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 8px; }
 .form-hint { margin: 0; max-width: 45ch; text-wrap: pretty; }
 
-/* confirm dialog */
-dialog.confirm { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; max-width: 24rem; }
-dialog.confirm::backdrop { background: rgb(0 0 0 / 0.55); }
+/* dialogs */
+dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); }
+dialog::backdrop { background: rgb(0 0 0 / 0.62); }
+dialog.confirm { padding: 24px; max-width: 24rem; }
 dialog.confirm p { margin: 0; text-wrap: pretty; }
+.modal { width: min(44rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto; }
+.modal-head { display: flex; justify-content: space-between; gap: 16px; align-items: start; padding: 24px 24px 0; }
+.modal form { border: 0; border-radius: 0; background: transparent; }
 .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 24px; }
 .detail form { border: 0; padding: 0; background: none; }
 
@@ -707,6 +769,17 @@ dialog.confirm p { margin: 0; text-wrap: pretty; }
 .htmx-request .spinner, .htmx-request.spinner { display: inline-block; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+@media (max-width: 760px) {
+	main { padding-inline: 16px; }
+	header, .section-bar, .detail-head { align-items: stretch; flex-direction: column; }
+	.proxy { align-items: stretch; flex-direction: column; padding: 24px 8px 8px; }
+	.proxy-open { padding: 8px; }
+	.proxy-actions, .detail-actions { justify-content: flex-start; }
+	.model-card { grid-template-columns: 1fr; }
+	.model-actions { min-width: 0; }
+	.check-row { grid-template-columns: 1rem minmax(0, 1fr); }
+	.check-note { grid-column: 2; }
+}
 @media (prefers-reduced-motion: reduce) {
 	*, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
@@ -738,7 +811,11 @@ dialog.confirm p { margin: 0; text-wrap: pretty; }
 	document.addEventListener("htmx:confirm", function (e) {
 		if (!e.detail.question) return;
 		e.preventDefault();
+		var ok = document.getElementById("confirm-ok");
+		var trigger = e.detail.elt;
 		document.getElementById("confirm-msg").textContent = e.detail.question;
+		ok.textContent = trigger.getAttribute("data-confirm-ok") || "Confirm";
+		ok.classList.toggle("btn-danger", trigger.getAttribute("data-confirm-kind") !== "safe");
 		issue = function () { e.detail.issueRequest(true); };
 		dlg.showModal();
 	});
