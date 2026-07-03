@@ -12,6 +12,8 @@ A [pi](https://github.com/badlogic/pi-mono) extension that manages OpenAI/Anthro
 - **Model tester** — per-model checks for everything pi needs: chat completion, streaming, tool calls, streaming tool calls, and `tool_choice` handling (OpenAI and Anthropic wire formats)
 - **Quirk auto-detection** — some new-api channels reject standard string `tool_choice`; the tester detects this and enables an object-style rewrite for that provider automatically
 - **Streaming tool-call fix** — proxies that report `finish_reason: "stop"` on tool calls still work
+- **models.json editing** — pi's native providers (`~/.pi/agent/models.json`) show up in the same UI and can be edited, tested, and deleted. Writes are merge-preserving (hand-tuned fields like `compat`, custom headers, and model names are kept verbatim), a rolling backup goes to `models.json.bak`, and changes apply to the running session via pi's model-registry refresh
+- **Model scope toggles** — add/remove any model from pi's model picker (`enabledModels` in `settings.json`) with one click from the detail views
 - **Real pages** — proxy detail and edit views have their own URLs; back/forward/refresh/deep-links work
 
 ## Install
@@ -76,6 +78,18 @@ State lives in a single JSON file — human-editable, no database:
 Pasted base URLs are normalized automatically (`…/v1/chat/completions` → `…/v1`).
 
 The API key is stored in plain text in this file — treat it like any local credentials file.
+
+## Code layout
+
+```
+extensions/proxy-manager/
+  index.ts    pi glue — provider registration, request quirks, /proxies command
+  config.ts   stores and types — proxies.json, models.json, settings.json
+  catalog.ts  models.dev lookups — consensus values, version-aware id matching
+  tester.ts   model checks — chat, streaming, tools, tool_choice quirk detection
+  views.ts    all HTML — page shell, views, model picker, test results
+  server.ts   routes + node http server
+```
 
 ## Development
 

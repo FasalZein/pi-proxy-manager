@@ -79,7 +79,14 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			// startServer stops any previous instance, so /reload + /proxies
 			// always serves the currently loaded code.
-			const { url } = await startServer(applyLive);
+			const refreshRegistry = () => {
+				try {
+					ctx.modelRegistry.refresh();
+				} catch {
+					// models.json changes still apply on next pi start
+				}
+			};
+			const { url } = await startServer(applyLive, refreshRegistry);
 			ctx.ui.notify(`Proxy manager at ${url}`, "info");
 			await pi.exec("open", [url]).catch(() => {});
 		},
