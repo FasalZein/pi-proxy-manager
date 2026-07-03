@@ -1,0 +1,10 @@
+{
+  "name": "pi-proxy-manager",
+  "version": "0.1.0",
+  "description": "Web UI for managing OpenAI/Anthropic-compatible proxy providers in pi — add, test, and register models live without restarting",
+  "keywords": ["pi-package", "pi", "proxy", "llm"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions"]
+  }
+}
