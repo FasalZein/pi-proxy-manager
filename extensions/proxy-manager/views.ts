@@ -61,17 +61,19 @@ function providerToggleButton(id: string, p: ProxyEntry, back = ""): string {
 	</form>`;
 }
 
-/** Toggle for pi's model scope (settings.json enabledModels). */
-function scopeButton(providerId: string, modelId: string, back: string, scope: Set<string>): string {
+function scopeStatus(providerId: string, modelId: string, scope: Set<string>): string {
+	const inScope = scope.has(`${providerId}/${modelId}`);
+	return `<span class="scope-pill${inScope ? " active" : ""}">${inScope ? "In scope" : "Out of scope"}</span>`;
+}
+
+function scopeMenuItem(providerId: string, modelId: string, back: string, scope: Set<string>): string {
 	const ref = `${providerId}/${modelId}`;
 	const inScope = scope.has(ref);
 	const next = inScope ? "Disable model" : "Enable model";
-	return `<form class="inline-hx" hx-post="/scope" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} ${ref}? This updates settings.json enabledModels.`, next, inScope)}>
+	return `<form class="menu-form" hx-post="/scope" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button" ${confirmAttrs(`${next} ${ref}? This updates settings.json enabledModels.`, next, inScope)}>
 		<input type="hidden" name="ref" value="${esc(ref)}">
 		<input type="hidden" name="back" value="${esc(back)}">
-		<button type="submit" class="switch-toggle${inScope ? " active" : ""}" aria-pressed="${inScope}" title="${inScope ? "Disable" : "Enable"} this model in pi's model picker">
-			${switchInner(inScope ? "Model enabled" : "Model disabled")}
-		</button>
+		<button type="submit" class="menu-item">${inScope ? "Disable in scope" : "Enable in scope"}</button>
 	</form>`;
 }
 
@@ -90,6 +92,21 @@ function providerScopeButton(providerId: string, models: any[], back: string, sc
 	</form>`;
 }
 
+function modelActionMenu(providerId: string, modelId: string, back: string, scope: Set<string>, testPath: string): string {
+	const editPath = back.startsWith("mj:") ? `/mj-model-edit/${providerId}?model=${encodeURIComponent(modelId)}` : `/model-edit/${providerId}?model=${encodeURIComponent(modelId)}`;
+	return `<details class="action-menu">
+		<summary class="action-trigger">Actions</summary>
+		<div class="action-list">
+			<button type="button" class="menu-item" hx-get="${esc(editPath)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">Edit model config</button>
+			<form class="menu-form" hx-post="${esc(testPath)}" hx-target="#test-area" hx-disabled-elt="find button" hx-indicator="find .spinner">
+				<input type="hidden" name="model" value="${esc(modelId)}">
+				<button type="submit" class="menu-item"><span class="spinner" aria-hidden="true"></span>Test model</button>
+			</form>
+			${scopeMenuItem(providerId, modelId, back, scope)}
+		</div>
+	</details>`;
+}
+
 function modelCards(providerId: string, models: any[], back: string, scope: Set<string>, testPath: string): string {
 	if (models.length === 0) {
 		return `<div class="empty"><p>No models are configured for this provider. Edit the provider and fetch models to add them.</p></div>`;
@@ -99,7 +116,10 @@ function modelCards(providerId: string, models: any[], back: string, scope: Set<
 		const cost = m.cost && (m.cost.input || m.cost.output) ? `${fmtPrice(m.cost.input ?? 0)} · ${fmtPrice(m.cost.output ?? 0)}` : "—";
 		return `<li class="model-card">
 			<div class="model-card-main">
-				<code title="${esc(m.id)}">${esc(m.id)}</code>
+				<div class="model-line">
+					<code title="${esc(m.id)}">${esc(m.id)}</code>
+					${scopeStatus(providerId, m.id, scope)}
+				</div>
 				<div class="model-facts">
 					<span><b>Context</b>${fmt(m.contextWindow ?? 0)}</span>
 					<span><b>Max out</b>${fmt(m.maxTokens ?? 0)}</span>
@@ -109,11 +129,7 @@ function modelCards(providerId: string, models: any[], back: string, scope: Set<
 				</div>
 			</div>
 			<div class="model-actions">
-				${scopeButton(providerId, m.id, back, scope)}
-				<form class="inline-hx" hx-post="${esc(testPath)}" hx-target="#test-area" hx-disabled-elt="find button" hx-indicator="find .spinner">
-					<input type="hidden" name="model" value="${esc(m.id)}">
-					<button type="submit" class="btn btn-small"><span class="spinner" aria-hidden="true"></span>Test</button>
-				</form>
+				${modelActionMenu(providerId, m.id, back, scope, testPath)}
 			</div>
 		</li>`;
 	}).join("\n");
@@ -434,6 +450,80 @@ export function renderEditView(id: string, entry: ProxyEntry): string {
 </div>`;
 }
 
+function renderModelConfigForm(providerId: string, model: any, postPath: string, detailPath: string, note: string): string {
+	const id = String(model.id ?? "");
+	const image = model.image === true || (Array.isArray(model.input) && model.input.includes("image"));
+	const cost = model.cost ?? {};
+	return `<form id="model-config-form" hx-post="${esc(postPath)}" hx-target="#view" hx-swap="outerHTML" hx-disabled-elt="find button[type=submit]" hx-push-url="${esc(detailPath)}">
+		<input type="hidden" name="model" value="${esc(id)}">
+		<fieldset>
+			<legend>Model config</legend>
+			<label class="field"><span>Model ID</span>
+				<input class="mono" value="${esc(id)}" readonly>
+			</label>
+			<label class="field"><span>Display name</span>
+				<input name="name__${esc(id)}" class="mono" value="${esc(model.name ?? id)}" autocomplete="off">
+			</label>
+			<div class="model-conf model-conf-edit">
+				<label class="num-field"><span>Context</span>
+					<input type="number" name="ctx__${esc(id)}" value="${model.contextWindow ?? 128000}" min="1" step="any">
+				</label>
+				<label class="num-field"><span>Max out</span>
+					<input type="number" name="max__${esc(id)}" value="${model.maxTokens ?? 8192}" min="1" step="any">
+				</label>
+				<label class="num-field"><span>$/M in</span>
+					<input type="number" name="ci__${esc(id)}" value="${cost.input ?? 0}" min="0" step="any">
+				</label>
+				<label class="num-field"><span>$/M out</span>
+					<input type="number" name="co__${esc(id)}" value="${cost.output ?? 0}" min="0" step="any">
+				</label>
+			</div>
+			<div class="model-flags edit-flags">
+				<label class="flag"><input type="checkbox" name="r__${esc(id)}"${model.reasoning ? " checked" : ""}> reasoning</label>
+				<label class="flag"><input type="checkbox" name="img__${esc(id)}"${image ? " checked" : ""}> image</label>
+			</div>
+			<input type="hidden" name="cr__${esc(id)}" value="${cost.cacheRead ?? 0}">
+			<input type="hidden" name="cw__${esc(id)}" value="${cost.cacheWrite ?? 0}">
+		</fieldset>
+		<div class="form-actions">
+			<button type="submit" class="btn btn-primary btn-block"><span class="spinner" aria-hidden="true"></span>Save model config</button>
+			<p class="hint form-hint">${esc(note)}</p>
+		</div>
+	</form>`;
+}
+
+export function renderModelEditView(providerId: string, model: any): string {
+	return `<div id="view">
+	<div class="detail">
+		<div class="detail-head">
+			<button class="btn btn-small" hx-get="/proxy/${esc(providerId)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">← Details</button>
+		</div>
+		<div class="detail-title">
+			<span class="dot" aria-hidden="true"></span>
+			<strong>Edit ${esc(model.id)}</strong>
+			<span class="pid">${esc(providerId)}</span>
+		</div>
+		${renderModelConfigForm(providerId, model, `/model-save/${providerId}`, `/proxy/${providerId}`, "Saves this model's limits, pricing, and flags in proxies.json, then re-registers the provider in pi.")}
+	</div>
+</div>`;
+}
+
+export function renderMjModelEditView(providerId: string, model: any): string {
+	return `<div id="view">
+	<div class="detail">
+		<div class="detail-head">
+			<button class="btn btn-small" hx-get="/mj/${esc(providerId)}" hx-target="#view" hx-swap="outerHTML" hx-push-url="true">← Details</button>
+		</div>
+		<div class="detail-title">
+			<span class="dot" aria-hidden="true"></span>
+			<strong>Edit ${esc(model.id)}</strong>
+			<span class="badge">models.json</span>
+		</div>
+		${renderModelConfigForm(providerId, model, `/mj-model-save/${providerId}`, `/mj/${providerId}`, "Saves this model's limits, pricing, and flags in models.json. Other provider fields are preserved.")}
+	</div>
+</div>`;
+}
+
 // ---------------------------------------------------------------------------
 // models.json provider views
 // ---------------------------------------------------------------------------
@@ -579,6 +669,8 @@ export function page(config: ProxyConfig, content?: string): string {
 	--accent: oklch(78% 0.14 155);
 	--accent-ink: oklch(22% 0.05 155);
 	--danger: oklch(70% 0.15 25);
+	--lift: oklch(100% 0 0);
+	--scrim: oklch(0% 0 0 / 0.62);
 	--radius: 8px;
 	--radius-sm: 6px;
 	--ease-out: cubic-bezier(0.25, 1, 0.5, 1);
@@ -621,7 +713,8 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 }
 .proxy-open:hover { background: var(--surface); }
 .proxy-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dot { position: absolute; top: 12px; right: 12px; width: 8px; height: 8px; border-radius: 9999px; background: var(--accent); }
+.dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--accent); flex-shrink: 0; }
+.proxy .dot { position: absolute; top: 12px; right: 12px; }
 .proxy-off .dot { background: var(--muted); }
 .proxy-off .proxy-info, .proxy-off .detail-grid, .proxy-off .model-cards { opacity: 0.55; }
 .proxy-info { flex: 1; min-width: 0; display: block; }
@@ -651,11 +744,14 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 	background: color-mix(in oklch, var(--bg) 55%, transparent);
 }
 .model-card-main { min-width: 0; display: grid; gap: 8px; }
-.model-card code { display: block; white-space: normal; overflow-wrap: anywhere; }
+.model-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.model-card code { display: block; white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+.scope-pill { flex-shrink: 0; border-radius: 9999px; padding: 1px 8px; background: var(--surface-2); color: var(--muted); font-size: 0.6875rem; font-weight: 500; }
+.scope-pill.active { color: var(--accent); background: color-mix(in oklch, var(--accent) 12%, transparent); }
 .model-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 8px 16px; color: var(--text); }
 .model-facts span { min-width: 0; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
 .model-facts b { display: block; color: var(--muted); font-size: 0.6875rem; font-weight: 500; text-transform: uppercase; }
-.model-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; min-width: 11rem; }
+.model-actions { display: flex; justify-content: flex-end; align-items: start; min-width: 7rem; }
 
 /* test results */
 .test-results { margin-top: 16px; }
@@ -673,7 +769,7 @@ input[type="number"], .num { font-variant-numeric: tabular-nums; }
 .empty p { margin: 0 0 16px; color: var(--muted); max-width: 45ch; margin-inline: auto; text-wrap: pretty; }
 
 /* form */
-form:not(.inline-hx) { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; background: var(--surface); }
+form:not(.inline-hx):not(.menu-form) { border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; background: var(--surface); }
 fieldset { border: 0; margin: 0 0 24px; padding: 0; }
 legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0; margin-bottom: 12px; }
 .field { display: block; margin-bottom: 16px; }
@@ -697,6 +793,7 @@ legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0
 .model-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .price { color: var(--muted); font-size: 0.8125rem; white-space: nowrap; }
 .model-conf { display: grid; grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr)); gap: 8px 12px; align-items: end; padding-inline-start: 24px; }
+.model-conf-edit { padding-inline-start: 0; margin-bottom: 16px; }
 .model-flags { display: flex; align-items: center; gap: 16px; padding-bottom: 12px; white-space: nowrap; }
 .model-row:nth-child(2) { animation-delay: 40ms; }
 .model-row:nth-child(3) { animation-delay: 80ms; }
@@ -727,36 +824,56 @@ legend { font-size: 0.8125rem; font-weight: 600; color: var(--muted); padding: 0
 	transition: background-color 150ms var(--ease-out), transform 100ms var(--ease-out);
 	text-decoration: none;
 }
-.btn:hover { background: color-mix(in oklch, var(--surface-2) 85%, white); }
+.btn:hover { background: color-mix(in oklch, var(--surface-2) 85%, var(--lift)); }
 .btn:active { transform: scale(0.96); }
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn:disabled { opacity: 0.5; pointer-events: none; cursor: not-allowed; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, white); }
+.btn-primary:hover { background: color-mix(in oklch, var(--accent) 88%, var(--lift)); }
 .btn-small { min-height: 36px; padding: 4px 12px; font-size: 0.8125rem; }
 .btn-block { width: 100%; }
 .btn-danger { color: var(--danger); }
 .btn-danger:hover { background: color-mix(in oklch, var(--danger) 12%, transparent); }
 .switch-toggle {
-	display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 10px;
-	border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--muted);
+	display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 4px 2px;
+	border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
 	font: inherit; font-size: 0.8125rem; font-weight: 500; cursor: pointer; white-space: nowrap;
-	transition: background-color 150ms var(--ease-out), color 150ms var(--ease-out), transform 100ms var(--ease-out);
+	transition: color 150ms var(--ease-out), transform 100ms var(--ease-out);
 }
-.switch-toggle:hover { background: color-mix(in oklch, var(--surface-2) 85%, white); color: var(--text); }
+.switch-toggle:hover { color: var(--text); }
 .switch-toggle:active { transform: scale(0.96); }
 .switch-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.switch-toggle.active { color: var(--text); border-color: color-mix(in oklch, var(--accent) 36%, var(--border)); }
+.switch-toggle.active { color: var(--text); }
 .switch-track { width: 30px; height: 18px; padding: 2px; border-radius: 9999px; background: var(--border); display: inline-flex; align-items: center; }
 .switch-thumb { width: 14px; height: 14px; border-radius: 9999px; background: var(--muted); transition: transform 150ms var(--ease-out), background-color 150ms var(--ease-out); }
 .switch-toggle.active .switch-track { background: color-mix(in oklch, var(--accent) 30%, var(--border)); }
 .switch-toggle.active .switch-thumb { transform: translateX(12px); background: var(--accent); }
+.action-menu { position: relative; }
+.action-trigger {
+	display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 4px 12px;
+	border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text);
+	font-size: 0.8125rem; font-weight: 500; cursor: pointer; list-style: none;
+}
+.action-trigger::-webkit-details-marker { display: none; }
+.action-trigger::after { content: "↓"; color: var(--muted); margin-left: 8px; }
+.action-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.action-menu[open] .action-trigger { border-color: var(--muted); }
+.action-list {
+	position: absolute; z-index: 10; right: 0; top: calc(100% + 6px); width: 12rem; padding: 4px;
+	border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+}
+.menu-form { margin: 0; }
+.menu-item {
+	width: 100%; min-height: 36px; padding: 6px 8px; border: 0; border-radius: 4px; background: transparent; color: var(--text);
+	font: inherit; font-size: 0.8125rem; text-align: left; cursor: pointer;
+}
+.menu-item:hover, .menu-item:focus-visible { background: var(--surface-2); outline: none; }
 .form-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; margin-top: 8px; }
 .form-hint { margin: 0; max-width: 45ch; text-wrap: pretty; }
 
 /* dialogs */
 dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); }
-dialog::backdrop { background: rgb(0 0 0 / 0.62); }
+dialog::backdrop { background: var(--scrim); }
 dialog.confirm { padding: 24px; max-width: 24rem; }
 dialog.confirm p { margin: 0; text-wrap: pretty; }
 .modal { width: min(44rem, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow: auto; }
@@ -777,7 +894,8 @@ dialog.confirm p { margin: 0; text-wrap: pretty; }
 	.proxy-open { padding: 8px; }
 	.proxy-actions, .detail-actions { justify-content: flex-start; }
 	.model-card { grid-template-columns: 1fr; }
-	.model-actions { min-width: 0; }
+	.model-actions { min-width: 0; justify-content: flex-start; }
+	.action-list { left: 0; right: auto; }
 	.check-row { grid-template-columns: 1rem minmax(0, 1fr); }
 	.check-note { grid-column: 2; }
 }

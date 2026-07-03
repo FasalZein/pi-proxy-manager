@@ -32,6 +32,8 @@ import {
 	renderHome,
 	renderMjDetail,
 	renderMjEditView,
+	renderMjModelEditView,
+	renderModelEditView,
 	renderModelPicker,
 	renderTestResults,
 } from "./views.ts";
@@ -88,6 +90,7 @@ export async function startServer(
 	const handler = async (
 		method: string,
 		pathname: string,
+		query: URLSearchParams,
 		form: URLSearchParams,
 		isHtmx: boolean,
 	): Promise<Reply> => {
@@ -130,6 +133,17 @@ export async function startServer(
 			return ok(wrap(config, renderEditView(editMatch[1], entry)));
 		}
 
+		const modelEditMatch = pathname.match(/^\/model-edit\/([a-z0-9-]+)$/);
+		if (method === "GET" && modelEditMatch) {
+			const config = loadConfig();
+			const id = modelEditMatch[1];
+			const modelId = String(query.get("model") ?? "");
+			const entry = config[id];
+			const model = entry?.models?.find((m) => m.id === modelId);
+			if (!entry || !model) return missing(config, "That model config is no longer available.");
+			return ok(wrap(config, renderModelEditView(id, model)));
+		}
+
 		const mjDetailMatch = pathname.match(/^\/mj\/([A-Za-z0-9_-]+)$/);
 		if (method === "GET" && mjDetailMatch) {
 			const config = loadConfig();
@@ -144,6 +158,17 @@ export async function startServer(
 			const p = loadModelsJson()?.providers?.[mjEditMatch[1]];
 			if (!p) return missing(config, "That provider is no longer in models.json.");
 			return ok(wrap(config, renderMjEditView(mjEditMatch[1], p)));
+		}
+
+		const mjModelEditMatch = pathname.match(/^\/mj-model-edit\/([A-Za-z0-9_-]+)$/);
+		if (method === "GET" && mjModelEditMatch) {
+			const config = loadConfig();
+			const id = mjModelEditMatch[1];
+			const modelId = String(query.get("model") ?? "");
+			const p = loadModelsJson()?.providers?.[id];
+			const model = p?.models?.find((m: any) => m.id === modelId);
+			if (!p || !model) return missing(config, "That model config is no longer in models.json.");
+			return ok(wrap(config, renderMjModelEditView(id, model)));
 		}
 
 		// -- shared fragments ---------------------------------------------------
@@ -264,6 +289,25 @@ export async function startServer(
 			return ok(renderHome(config) + flash("ok", `${id} deleted and unregistered from pi.`));
 		}
 
+		const modelSaveMatch = pathname.match(/^\/model-save\/([a-z0-9-]+)$/);
+		if (method === "POST" && modelSaveMatch) {
+			const id = modelSaveMatch[1];
+			const modelId = String(form.get("model") ?? "");
+			const config = loadConfig();
+			const entry = config[id];
+			const index = entry?.models?.findIndex((m) => m.id === modelId) ?? -1;
+			if (!entry || index < 0) return ok(renderHome(config) + flash("error", "That model config is no longer available."));
+			const old = entry.models[index];
+			entry.models[index] = {
+				...old,
+				name: String(form.get(`name__${modelId}`) ?? old.name ?? modelId),
+				...modelFromForm(form, modelId),
+			};
+			saveConfig(config);
+			applyLive(id, entry);
+			return ok(renderDetail(id, entry) + flash("ok", `${id}/${modelId} model config saved.`));
+		}
+
 		const testMatch = pathname.match(/^\/test\/([a-z0-9-]+)$/);
 		if (method === "POST" && testMatch) {
 			const id = testMatch[1];
@@ -311,6 +355,32 @@ export async function startServer(
 			saveModelsJson(raw);
 			refreshRegistry?.();
 			return ok(renderHome(config) + flash("ok", `Updated ${id} in models.json — applied to the running pi session.`));
+		}
+
+		const mjModelSaveMatch = pathname.match(/^\/mj-model-save\/([A-Za-z0-9_-]+)$/);
+		if (method === "POST" && mjModelSaveMatch) {
+			const id = mjModelSaveMatch[1];
+			const modelId = String(form.get("model") ?? "");
+			const config = loadConfig();
+			const raw = loadModelsJson();
+			const prov = raw?.providers?.[id];
+			const index = prov?.models?.findIndex((m: any) => m.id === modelId) ?? -1;
+			if (!prov || index < 0) return ok(renderHome(config) + flash("error", "That model config is no longer in models.json."));
+			const old = prov.models[index] ?? {};
+			const fields = modelFromForm(form, modelId);
+			prov.models[index] = {
+				...old,
+				id: modelId,
+				name: String(form.get(`name__${modelId}`) ?? old.name ?? modelId),
+				contextWindow: fields.contextWindow,
+				maxTokens: fields.maxTokens,
+				reasoning: fields.reasoning,
+				input: fields.image ? ["text", "image"] : ["text"],
+				cost: fields.cost,
+			};
+			saveModelsJson(raw);
+			refreshRegistry?.();
+			return ok(renderMjDetail(id, prov) + flash("ok", `${id}/${modelId} model config saved to models.json.`));
 		}
 
 		const mjDeleteMatch = pathname.match(/^\/mj-delete\/([A-Za-z0-9_-]+)$/);
@@ -390,10 +460,10 @@ export async function startServer(
 		});
 		req.on("end", async () => {
 			try {
-				const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+				const url = new URL(req.url ?? "/", "http://localhost");
 				const isHtmx =
 					req.headers["hx-request"] === "true" && req.headers["hx-history-restore-request"] !== "true";
-				const reply = await handler(req.method ?? "GET", pathname, new URLSearchParams(body), isHtmx);
+				const reply = await handler(req.method ?? "GET", url.pathname, url.searchParams, new URLSearchParams(body), isHtmx);
 				res.writeHead(reply.status, HTML_HEADERS);
 				res.end(reply.body);
 			} catch (error) {
